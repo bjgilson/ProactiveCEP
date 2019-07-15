@@ -1,0 +1,1243 @@
+
+# Boston 
+# Analysis of the Boston Data for a lead time of 1
+# Proactive CEP
+# Brian Gilson
+# May 1019
+
+
+#----- Set up Libraries  --------
+library(sqldf)
+library(utils)
+library(readr)
+library(rattle)
+library(Hmisc)
+library(reshape2)
+library(weathermetrics)
+library(ROpenWeatherMap)
+library(dplyr)
+library(lubridate)
+library(ROCR)
+library(caret)
+library(rpart)
+library(partykit)
+library(rpart.plot)
+library(kernlab)
+library(xgboost)
+library(randomForest)
+library(nnet)
+library(imputeTS)
+library(ggplot2)
+# rm(list=ls())
+
+# bring in boston dataset and manipulate
+boston_base<-readRDS("c:/rProjSpectre/DisWeather/boston_base.rds")
+
+#=========== Begin the Modeling Process =======================================
+
+#----- Setup Datasets -----------------
+set.seed(crv$seed)# 42
+bos1dataset<-boston_base # can this be the same dataset each time
+bos1nobs     <- nrow(bos1dataset)
+bos1train    <- bos1sample <- sample(bos1nobs, 0.7*bos1nobs)
+bos1validate <- sample(setdiff(seq_len(bos1nobs), bos1train), 0.3*bos1nobs)
+bos1test     <- NULL
+
+
+# The following variable selections have been noted.
+
+bos1input     <- c("humidity", "pressure", "wind_direction", "wind_speed",
+                   "temperature")
+
+bos1numeric   <- c("humidity", "pressure", "wind_direction", "wind_speed",
+                   "temperature")
+
+bos1categoric <- NULL
+
+bos1target    <- "isWeatherEvent1"
+bos1risk      <- NULL
+bos1ident     <- NULL
+bos1ignore    <-c("location", "datetime", "year", "month", "weather_description", "weather_desc","isWeatherEvent", "isWeatherEvent2", "isWeatherEvent3", "isWeatherEvent4", "isWeatherEvent5", "isWeatherEvent6", "isWeatherEvent7", "isWeatherEvent8", "isWeatherEvent9", "isWeatherEvent10", "isWeatherEvent11", "isWeatherEvent12", "humidity_orig", "temperature_orig", "pressure_orig", "wind_speed_orig", "wind_direction_orig")
+crs$weights   <- NULL
+
+
+# The 'Hmisc' package provides the 'contents' function.
+
+library(Hmisc, quietly=TRUE)
+
+# Obtain a summary of the dataset.
+
+contents(bos1dataset[bos1sample, c(bos1input, bos1risk, bos1target)])
+summary(bos1dataset[bos1sample, c(bos1input, bos1risk, bos1target)])
+
+
+#------Decision Tree --------
+
+# The 'rpart' package provides the 'rpart' function.
+
+library(rpart, quietly=TRUE)
+
+# Reset the random number seed to obtain the same results each time.
+
+set.seed(crv$seed)
+
+# Build the Decision Tree model.
+
+bos1rpart <- rpart(isWeatherEvent1 ~ .,
+                   data=bos1dataset[bos1train, c(bos1input, bos1target)],
+                   method="class",
+                   parms=list(split="information"))
+
+# Generate a textual view of the Decision Tree model.
+
+print(bos1rpart)
+printcp(bos1rpart)
+cat("\n")
+
+# Time taken: 0.39 secs
+
+fancyRpartPlot(bos1rpart, main="Decision Tree boston_1 $ isWeatherEvent1")
+fancyRpartPlot(bos1rpart)
+
+rpart.rules(bos1rpart, roundint=FALSE)
+##-----remove Extreme Boost ADA -------
+# 
+# # The `xgboost' package implements the extreme gradient boost algorithm.
+# library(xgboost, quietly=TRUE)
+# # Build the Extreme Boost model.
+# 
+# set.seed(crv$seed)
+# 
+# boostdat<-bos1dataset[bos1train,c(bos1input, bos1target)]
+# str(boostdat)
+# # 'data.frame':	30671 obs. of  6 variables:
+# boostdatmtrx<-as.matrix(boostdat)
+# str(boostdatmtrx)
+# # num [1:30671, 1:6] 93 36 66 93 91 68 26 93 100 81 ...
+# # - attr(*, "dimnames")=List of 2
+# # ..$ : chr [1:30671] "40084" "41058" "12537" "36385" ...
+# # ..$ : chr [1:6] "humidity" "pressure" "wind_direction" "wind_speed" ...
+# 
+# head(boostdatmtrx)
+# write.csv(boostdat,"boostdat.csv")
+# 
+# 
+# bos1ada <- xgboost(isWeatherEvent1 ~ .,
+#  data=boostdat,                  
+# #  data              = bos1dataset[bos1train,c(bos1input, bos1target)],
+#   max_depth         = 6,
+#   eta               = 0.3, 
+#   num_parallel_tree = 1, 
+#   nthread           = 2, 
+#   nround            = 50,
+#   metrics           = 'error',
+#   objective         = 'binary:logistic')
+# 
+# # Print the results of the modelling.
+# 
+# print(bos1ada)
+# 
+# cat('\nFinal iteration error rate:\n')
+# print(round(bos1ada$evaluation_log[bos1ada$niter, ], 2))
+# 
+# cat('\nImportance/Frequency of variables actually used:\n')
+# print(bos1imp <- importance(bos1ada, bos1dataset[bos1train,c(bos1input, bos1target)]))
+# 
+# # Time taken: 0.83 secs
+# str(bos1ada)
+# bos1ada$formula
+
+#------Random Forest model using the traditional approach.-------
+
+set.seed(crv$seed)
+
+bos1rf <- randomForest::randomForest(as.factor(isWeatherEvent1) ~ .,
+                                     data=bos1dataset[bos1sample, c(bos1input, bos1target)], 
+                                     ntree=500,
+                                     mtry=2,
+                                     importance=TRUE,
+                                     na.action=randomForest::na.roughfix,
+                                     replace=FALSE)
+
+# Generate textual output of the 'Random Forest' model.
+
+bos1rf
+
+# The `pROC' package implements various AUC functions.
+
+# Calculate the Area Under the Curve (AUC).
+
+pROC::roc(bos1rf$y, as.numeric(bos1rf$predicted))
+
+# Calculate the AUC Confidence Interval.
+
+pROC::ci.auc(bos1rf$y, as.numeric(bos1rf$predicted))
+
+# List the importance of the variables.
+
+rn <- round(randomForest::importance(bos1rf), 2)
+rn[order(rn[,3], decreasing=TRUE),]
+
+# Time taken: 24.06 secs
+
+
+#------Support vector machine. ---------
+
+# The 'kernlab' package provides the 'ksvm' function.
+
+library(kernlab, quietly=TRUE)
+
+# Build a Support Vector Machine model.
+
+set.seed(crv$seed)
+bos1ksvm <- ksvm(as.factor(isWeatherEvent1) ~ .,
+                 data=bos1dataset[bos1train,c(bos1input, bos1target)],
+                 kernel="rbfdot",
+                 prob.model=TRUE)
+
+# Generate a textual view of the SVM model.
+
+bos1ksvm
+
+# Time taken: 2.36 mins
+
+
+#------Logistic Regression model ----------------
+
+# Build a Regression model.
+
+bos1glm <- glm(isWeatherEvent1 ~ .,
+               data=bos1dataset[bos1train, c(bos1input, bos1target)],
+               family=binomial(link="logit"))
+
+# Generate a textual view of the Linear model.
+
+print(summary(bos1glm))
+
+cat(sprintf("Log likelihood: %.3f (%d df)\n",
+            logLik(bos1glm)[1],
+            attr(logLik(bos1glm), "df")))
+
+cat(sprintf("Null/Residual deviance difference: %.3f (%d df)\n",
+            bos1glm$null.deviance-bos1glm$deviance,
+            bos1glm$df.null-bos1glm$df.residual))
+
+cat(sprintf("Chi-square p-value: %.8f\n",
+            dchisq(bos1glm$null.deviance-bos1glm$deviance,
+                   bos1glm$df.null-bos1glm$df.residual)))
+
+cat(sprintf("Pseudo R-Square (optimistic): %.8f\n",
+            cor(bos1glm$y, bos1glm$fitted.values)))
+
+cat('\n==== ANOVA ====\n\n')
+print(anova(bos1glm, test="Chisq"))
+cat("\n")
+
+# Time taken: 0.47 secs
+
+# 
+##-----remove  Neural Network ----------
+# 
+# # Build a neural network model using the nnet package.
+# 
+# library(nnet, quietly=TRUE)
+# 
+# # Build the NNet model.
+# 
+# set.seed(199)
+# bos1nnet <- nnet(as.factor(isWeatherEvent1) ~ .,
+#     data=bos1dataset[bos1sample,c(bos1input, bos1target)],
+#     size=10, skip=TRUE, MaxNWts=10000, trace=FALSE, maxit=100)
+# 
+# # Print the results of the modelling.
+# 
+# cat(sprintf("A %s network with %d weights.\n",
+#     paste(bos1nnet$n, collapse="-"),
+#     length(bos1nnet$wts)))
+# cat(sprintf("Inputs: %s.\n",
+#     paste(bos1nnet$coefnames, collapse=", ")))
+# cat(sprintf("Output: %s.\n",
+#     names(attr(bos1nnet$terms, "dataClasses"))[1]))
+# cat(sprintf("Sum of Squares Residuals: %.4f.\n",
+#     sum(residuals(bos1nnet) ^ 2)))
+# cat("\n")
+# print(summary(bos1nnet))
+# cat('\n')
+# 
+# # Time taken: 0.30 secs
+# 
+
+
+
+#------Error Matrix for the Decision Tree model.-----
+
+# Obtain the response from the Decision Tree model.
+
+bos1pr <- predict(bos1rpart, newdata=bos1dataset[bos1validate, c(bos1input, bos1target)],
+                  type="class")
+
+# Generate the confusion matrix showing counts.
+
+rattle::errorMatrix(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1, bos1pr, count=TRUE)
+
+# Generate the confusion matrix showing proportions.
+
+(per <- rattle::errorMatrix(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1, bos1pr))
+
+# Calculate the overall error percentage.
+
+cat(100-sum(diag(per), na.rm=TRUE))
+
+# Calculate the averaged class error percentage.
+
+cat(mean(per[,"Error"], na.rm=TRUE))
+
+##-----Error Matrix for the Extreme Boost model.-----
+# 
+# # Obtain the response from the Extreme Boost model.
+# 
+# lvls <- levels(as.factor(bos1dataset[[bos1target]]))
+# bos1pr <- factor(ifelse(predict(bos1ada, bos1dataset[bos1validate, c(bos1input, bos1target)]) > 0.5,
+# 			lvls[2], lvls[1]))
+# 
+# # Generate the confusion matrix showing counts.
+# 
+# rattle::errorMatrix(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1, bos1pr, count=TRUE)
+# 
+# # Generate the confusion matrix showing proportions.
+# 
+# (per <- rattle::errorMatrix(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1, bos1pr))
+# 
+# # Calculate the overall error percentage.
+# 
+# cat(100-sum(diag(per), na.rm=TRUE))
+# 
+# # Calculate the averaged class error percentage.
+# 
+# cat(mean(per[,"Error"], na.rm=TRUE))
+
+#----- Error Matrix for the Random Forest model.-----
+
+# Obtain the response from the Random Forest model.
+bos1pr <- predict(bos1rf, newdata=na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]))
+
+# Generate the confusion matrix showing counts.
+rattle::errorMatrix(na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)])$isWeatherEvent1, bos1pr, count=TRUE)
+
+# Generate the confusion matrix showing proportions.
+(per <- rattle::errorMatrix(na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)])$isWeatherEvent1, bos1pr))
+
+# Calculate the overall error percentage.
+cat(100-sum(diag(per), na.rm=TRUE))
+
+# Calculate the averaged class error percentage.
+cat(mean(per[,"Error"], na.rm=TRUE))
+
+#------Error Matrix for the SVM model.-------
+
+# Obtain the response from the SVM model.
+bos1pr <- kernlab::predict(bos1ksvm, newdata=na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]))
+
+# Generate the confusion matrix showing counts.
+rattle::errorMatrix(na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)])$isWeatherEvent1, bos1pr, count=TRUE)
+
+# Generate the confusion matrix showing proportions.
+(per <- rattle::errorMatrix(na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)])$isWeatherEvent1, bos1pr))
+
+# Calculate the overall error percentage.
+
+cat(100-sum(diag(per), na.rm=TRUE))
+
+# Calculate the averaged class error percentage.
+cat(mean(per[,"Error"], na.rm=TRUE))
+
+#----- Error Matrix for the Logistic Regression Linear model.------
+
+# Obtain the response from the Linear model.
+bos1pr <- as.vector(ifelse(predict(bos1glm, 
+                                   type    = "response",
+                                   newdata = bos1dataset[bos1validate, c(bos1input, bos1target)]) > 0.5, "1", "0"))
+
+# Generate the confusion matrix showing counts.
+rattle::errorMatrix(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1, bos1pr, count=TRUE)
+
+# Generate the confusion matrix showing proportions.
+(per <- rattle::errorMatrix(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1, bos1pr))
+
+# Calculate the overall error percentage.
+cat(100-sum(diag(per), na.rm=TRUE))
+
+# Calculate the averaged class error percentage.
+cat(mean(per[,"Error"], na.rm=TRUE))
+
+##-----remoove Error Matrix for the Neural Net model.-----
+# 
+# # Obtain the response from the Neural Net model.
+# bos1pr <- predict(bos1nnet, newdata=bos1dataset[bos1validate, c(bos1input, bos1target)], type="class")
+# 
+# # Generate the confusion matrix showing counts.
+# rattle::errorMatrix(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1, bos1pr, count=TRUE)
+# 
+# # Generate the confusion matrix showing proportions.
+# (per <- rattle::errorMatrix(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1, bos1pr))
+# 
+# # Calculate the overall error percentage.
+# cat(100-sum(diag(per), na.rm=TRUE))
+# 
+# # Calculate the averaged class error percentage.
+# 
+# cat(mean(per[,"Error"], na.rm=TRUE))
+# 
+# 
+# 
+
+
+
+#-------Lift Chart: rf random forest ---------. -----------
+# Obtain predictions for the rf model on boston_1 [validate].
+
+library(ROCR)
+bos1pr <- predict(bos1rf, newdata=na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]),
+                  type    = "prob")[,2]
+
+# Remove observations with missing target.
+no.miss   <- na.omit(na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)])$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+
+# Convert rate of positive predictions to percentage.
+per <- performance(pred, "lift", "rpp")
+per@x.values[[1]] <- per@x.values[[1]]*100
+
+# Plot the lift chart.
+ROCR::plot(per, col="#00CC00FF", lty=1, xlab="Caseload (%)", add=FALSE)
+
+#-------Lift Chart: rpart recursive partitioning decision tree  -----
+
+library(ROCR)
+# Obtain predictions for the rpart model on boston_1 [validate].
+
+bos1pr <- predict(bos1rpart, newdata=bos1dataset[bos1validate, c(bos1input, bos1target)])[,2]
+# Remove observations with missing target.
+
+no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+
+# Convert rate of positive predictions to percentage.
+
+per <- performance(pred, "lift", "rpp")
+per@x.values[[1]] <- per@x.values[[1]]*100
+
+# Plot the lift chart.
+ROCR::plot(per, col="#CC0000FF", lty=2, xlab="Caseload (%)", add=TRUE)
+
+# #-----remove lift chart: xgb Extreme Gradient Boosting ------------------
+# # Obtain predictions for the xgb model on boston_1 [validate].
+# 
+# bos1pr <- predict(bos1ada, bos1dataset[bos1validate, c(bos1input, bos1target)])
+# 
+# # Remove observations with missing target.
+# no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+# miss.list <- attr(no.miss, "na.action")
+# attributes(no.miss) <- NULL
+# 
+# if (length(miss.list))
+# {
+#   pred <- prediction(bos1pr[-miss.list], no.miss)
+# } else
+# {
+#   pred <- prediction(bos1pr, no.miss)
+# }
+# 
+# # Convert rate of positive predictions to percentage.
+# 
+# per <- performance(pred, "lift", "rpp")
+# per@x.values[[1]] <- per@x.values[[1]]*100
+# 
+# # Plot the lift chart.
+# ROCR::plot(per, col="#CCCC00FF", lty=2, xlab="Caseload (%)", add=TRUE)
+
+#-------Lift Chart: KSVM Support Vector Machine requires the ROCR package. ------
+# Obtain predictions for the ksvm model on boston_1 [validate].
+
+bos1pr <- kernlab::predict(bos1ksvm, newdata=na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]),
+                           type    = "probabilities")[,2]
+
+# Remove observations with missing target.
+no.miss   <- na.omit(na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)])$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+
+# Convert rate of positive predictions to percentage.
+per <- performance(pred, "lift", "rpp")
+per@x.values[[1]] <- per@x.values[[1]]*100
+
+# Plot the lift chart.
+ROCR::plot(per, col="#00CCCCFF", lty=4, xlab="Caseload (%)", add=TRUE)
+
+#-------Lift Chart: GLM  Logistic Regression requires the ROCR package. -------
+# Obtain predictions for the glm model on boston_1 [validate].
+
+bos1pr <- predict(bos1glm, 
+                  type    = "response",
+                  newdata = bos1dataset[bos1validate, c(bos1input, bos1target)])
+
+# Remove observations with missing target.
+no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+
+# Convert rate of positive predictions to percentage.
+per <- performance(pred, "lift", "rpp")
+per@x.values[[1]] <- per@x.values[[1]]*100
+
+# Plot the lift chart.
+ROCR::plot(per, col="#0000CCFF", lty=5, xlab="Caseload (%)", add=TRUE)
+
+#------ Lift Chart : add legend and decorations -------
+
+
+legend("topright", c("rf","rpart","ksvm","glm"), 
+       col=c("#00CC00FF","#CC0000FF","#00CCCCFF","#0000CCFF"),
+       lty=c(1,2,4,5), title="Models", inset=c(0.05, 0.05))
+
+
+# Add decorations to the plot.
+title(main="Lift Chart  boston_1 [validate]",
+      sub=paste("Rattle", format(Sys.time(), "%Y-%b-%d %H:%M:%S"), Sys.info()["user"]))
+
+#grid()
+
+
+
+#-------remove Lift Chart: Nnet Obtain predictions for the nnet model on boston_1 [validate]. -------
+# 
+# bos1pr <- predict(bos1nnet, newdata=bos1dataset[bos1validate, c(bos1input, bos1target)])
+# 
+# # Remove observations with missing target.
+# 
+# no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+# miss.list <- attr(no.miss, "na.action")
+# attributes(no.miss) <- NULL
+# 
+# if (length(miss.list))
+# {
+#   pred <- prediction(bos1pr[-miss.list], no.miss)
+# } else
+# {
+#   pred <- prediction(bos1pr, no.miss)
+# }
+# 
+# # Convert rate of positive predictions to percentage.
+# 
+# per <- performance(pred, "lift", "rpp")
+# per@x.values[[1]] <- per@x.values[[1]]*100
+# 
+# # Plot the lift chart.
+# ROCR::plot(per, col="#CC00CCFF", lty=6, xlab="Caseload (%)", add=TRUE)
+# 
+# 
+# legend("topright", c("rpart","xgb","rf","ksvm","glm"), col=rainbow(6, 1, .8), lty=1:6, title="Models", inset=c(0.05, 0.05))
+# 
+# # Add decorations to the plot.
+# 
+# title(main="Lift Chart  boston_1 [validate]",
+#     sub=paste("Rattle", format(Sys.time(), "%Y-%b-%d %H:%M:%S"), Sys.info()["user"]))
+# grid()
+# 
+# 
+
+
+
+#------ROC Rpart for the rpart model on boston_1 [validate].-------
+
+bos1pr <- predict(bos1rpart, newdata=bos1dataset[bos1validate, c(bos1input, bos1target)])[,2]
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+
+pe <- performance(pred, "tpr", "fpr")
+au <- performance(pred, "auc")@y.values[[1]]
+pd <- data.frame(fpr=unlist(pe@x.values), tpr=unlist(pe@y.values))
+p <- ggplot(pd, aes(x=fpr, y=tpr))
+p <- p + geom_line(colour="red")
+p <- p + xlab("False Positive Rate") + ylab("True Positive Rate")
+p <- p + ggtitle("ROC Curve Decision Tree boston_1 [validate] isWeatherEvent1")
+p <- p + theme(plot.title=element_text(size=10))
+p <- p + geom_line(data=data.frame(), aes(x=c(0,1), y=c(0,1)), colour="grey")
+p <- p + annotate("text", x=0.50, y=0.00, hjust=0, vjust=0, size=5,
+                  label=paste("AUC =", round(au, 2)))
+print(p)
+
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+performance(pred, "auc")
+
+# ROC Curve: requires the ROCR package.
+
+library(ROCR)
+
+# ROC Curve: requires the ggplot2 package.
+
+library(ggplot2, quietly=TRUE)
+
+##-----remove ROC xgb ada model on boston_1 [validate].-------
+
+# bos1pr <- predict(bos1ada, bos1dataset[bos1validate, c(bos1input, bos1target)])
+# 
+# # Remove observations with missing target.
+# 
+# no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+# miss.list <- attr(no.miss, "na.action")
+# attributes(no.miss) <- NULL
+# 
+# if (length(miss.list))
+# {
+#   pred <- prediction(bos1pr[-miss.list], no.miss)
+# } else
+# {
+#   pred <- prediction(bos1pr, no.miss)
+# }
+# 
+# pe <- performance(pred, "tpr", "fpr")
+# au <- performance(pred, "auc")@y.values[[1]]
+# pd <- data.frame(fpr=unlist(pe@x.values), tpr=unlist(pe@y.values))
+# p <- ggplot(pd, aes(x=fpr, y=tpr))
+# p <- p + geom_line(colour="red")
+# p <- p + xlab("False Positive Rate") + ylab("True Positive Rate")
+# p <- p + ggtitle("ROC Curve Extreme Boost boston_1 [validate] isWeatherEvent1")
+# p <- p + theme(plot.title=element_text(size=10))
+# p <- p + geom_line(data=data.frame(), aes(x=c(0,1), y=c(0,1)), colour="grey")
+# p <- p + annotate("text", x=0.50, y=0.00, hjust=0, vjust=0, size=5,
+#                    label=paste("AUC =", round(au, 2)))
+# print(p)
+
+# Calculate the area under the curve for the plot.
+
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+performance(pred, "auc")
+
+# ROC Curve: requires the ROCR package.
+
+library(ROCR)
+
+# ROC Curve: requires the ggplot2 package.
+
+library(ggplot2, quietly=TRUE)
+
+#------ROC rf random forest model on boston_1 [validate].--------
+
+bos1pr <- predict(bos1rf, newdata=na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]),
+                  type    = "prob")[,2]
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)])$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+
+pe <- performance(pred, "tpr", "fpr")
+au <- performance(pred, "auc")@y.values[[1]]
+pd <- data.frame(fpr=unlist(pe@x.values), tpr=unlist(pe@y.values))
+p <- ggplot(pd, aes(x=fpr, y=tpr))
+p <- p + geom_line(colour="red")
+p <- p + xlab("False Positive Rate") + ylab("True Positive Rate")
+p <- p + ggtitle("ROC Curve Random Forest boston_1 [validate] isWeatherEvent1")
+p <- p + theme(plot.title=element_text(size=10))
+p <- p + geom_line(data=data.frame(), aes(x=c(0,1), y=c(0,1)), colour="grey")
+p <- p + annotate("text", x=0.50, y=0.00, hjust=0, vjust=0, size=5,
+                  label=paste("AUC =", round(au, 2)))
+print(p)
+
+# Calculate the area under the curve for the plot.
+
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)])$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+performance(pred, "auc")
+
+# ROC Curve: requires the ROCR package.
+
+library(ROCR)
+
+# ROC Curve: requires the ggplot2 package.
+
+library(ggplot2, quietly=TRUE)
+
+#----- ROC ksvm support vector machine model on boston_1 [validate]. --------
+
+bos1pr <- kernlab::predict(bos1ksvm, newdata=na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]),
+                           type    = "probabilities")[,2]
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)])$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+
+pe <- performance(pred, "tpr", "fpr")
+au <- performance(pred, "auc")@y.values[[1]]
+pd <- data.frame(fpr=unlist(pe@x.values), tpr=unlist(pe@y.values))
+p <- ggplot(pd, aes(x=fpr, y=tpr))
+p <- p + geom_line(colour="red")
+p <- p + xlab("False Positive Rate") + ylab("True Positive Rate")
+p <- p + ggtitle("ROC Curve SVM boston_1 [validate] isWeatherEvent1")
+p <- p + theme(plot.title=element_text(size=10))
+p <- p + geom_line(data=data.frame(), aes(x=c(0,1), y=c(0,1)), colour="grey")
+p <- p + annotate("text", x=0.50, y=0.00, hjust=0, vjust=0, size=5,
+                  label=paste("AUC =", round(au, 2)))
+print(p)
+
+# Calculate the area under the curve for the plot.
+
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)])$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+performance(pred, "auc")
+
+# ROC Curve: requires the ROCR package.
+
+library(ROCR)
+
+# ROC Curve: requires the ggplot2 package.
+
+library(ggplot2, quietly=TRUE)
+
+#----- ROC glm logistic regression model on boston_1 [validate].-----
+
+bos1pr <- predict(bos1glm, 
+                  type    = "response",
+                  newdata = bos1dataset[bos1validate, c(bos1input, bos1target)])
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+
+pe <- performance(pred, "tpr", "fpr")
+au <- performance(pred, "auc")@y.values[[1]]
+pd <- data.frame(fpr=unlist(pe@x.values), tpr=unlist(pe@y.values))
+p <- ggplot(pd, aes(x=fpr, y=tpr))
+p <- p + geom_line(colour="red")
+p <- p + xlab("False Positive Rate") + ylab("True Positive Rate")
+p <- p + ggtitle("ROC Curve Linear boston_1 [validate] isWeatherEvent1")
+p <- p + theme(plot.title=element_text(size=10))
+p <- p + geom_line(data=data.frame(), aes(x=c(0,1), y=c(0,1)), colour="grey")
+p <- p + annotate("text", x=0.50, y=0.00, hjust=0, vjust=0, size=5,
+                  label=paste("AUC =", round(au, 2)))
+print(p)
+
+# Calculate the area under the curve for the plot.
+
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+performance(pred, "auc")
+
+# ROC Curve: requires the ROCR package.
+
+library(ROCR)
+
+# ROC Curve: requires the ggplot2 package.
+
+library(ggplot2, quietly=TRUE)
+
+##-----remove ROC nnet model on boston_1 [validate].-----
+# 
+# bos1pr <- predict(bos1nnet, newdata=bos1dataset[bos1validate, c(bos1input, bos1target)])
+# 
+# # Remove observations with missing target.
+# 
+# no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+# miss.list <- attr(no.miss, "na.action")
+# attributes(no.miss) <- NULL
+# 
+# if (length(miss.list))
+# {
+#   pred <- prediction(bos1pr[-miss.list], no.miss)
+# } else
+# {
+#   pred <- prediction(bos1pr, no.miss)
+# }
+# 
+# pe <- performance(pred, "tpr", "fpr")
+# au <- performance(pred, "auc")@y.values[[1]]
+# pd <- data.frame(fpr=unlist(pe@x.values), tpr=unlist(pe@y.values))
+# p <- ggplot(pd, aes(x=fpr, y=tpr))
+# p <- p + geom_line(colour="red")
+# p <- p + xlab("False Positive Rate") + ylab("True Positive Rate")
+# p <- p + ggtitle("ROC Curve Neural Net boston_1 [validate] isWeatherEvent1")
+# p <- p + theme(plot.title=element_text(size=10))
+# p <- p + geom_line(data=data.frame(), aes(x=c(0,1), y=c(0,1)), colour="grey")
+# p <- p + annotate("text", x=0.50, y=0.00, hjust=0, vjust=0, size=5,
+#                    label=paste("AUC =", round(au, 2)))
+# print(p)
+
+# Calculate the area under the curve for the plot.
+
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+performance(pred, "auc")
+
+
+
+
+
+
+
+#------Precision/Recall rf model on boston_1 [validate].-----
+
+bos1pr <- predict(bos1rf, newdata=na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]),
+                  type    = "prob")[,2]
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)])$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+ROCR::plot(performance(pred, "prec", "rec"), col="#00CC00FF", lty=1, add=FALSE)
+
+#----- Precision/Recall rpart -------
+# Generate a Precision/Recall Plot for the rpart model on boston_1 [validate].
+
+bos1pr <- predict(bos1rpart, newdata=bos1dataset[bos1validate, c(bos1input, bos1target)])[,2]
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+ROCR::plot(performance(pred, "prec", "rec"), col="#CC0000FF", lty=2, add=TRUE)
+
+
+#------remove Precision/Recall xgb model on boston_1 [validate].------
+# 
+# bos1pr <- predict(bos1ada, bos1dataset[bos1validate, c(bos1input, bos1target)])
+# 
+# # Remove observations with missing target.
+# 
+# no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+# miss.list <- attr(no.miss, "na.action")
+# attributes(no.miss) <- NULL
+# 
+# if (length(miss.list))
+# {
+#   pred <- prediction(bos1pr[-miss.list], no.miss)
+# } else
+# {
+#   pred <- prediction(bos1pr, no.miss)
+# }
+# ROCR::plot(performance(pred, "prec", "rec"), col="#CCCC00FF", lty=3, add=TRUE)
+# 
+
+#------Precision/Recall ksvm model on boston_1 [validate]. -------
+
+bos1pr <- kernlab::predict(bos1ksvm, newdata=na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]),
+                           type    = "probabilities")[,2]
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)])$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+ROCR::plot(performance(pred, "prec", "rec"), col="#00CCCCFF", lty=4, add=TRUE)
+
+
+#------Precision/Recall glm model on boston_1 [validate].-----
+
+bos1pr <- predict(bos1glm, 
+                  type    = "response",
+                  newdata = bos1dataset[bos1validate, c(bos1input, bos1target)])
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(bos1pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(bos1pr, no.miss)
+}
+ROCR::plot(performance(pred, "prec", "rec"), col="#0000CCFF", lty=5, add=TRUE)
+
+#----- Precision/Recall : Add a legend and decorations ------
+
+legend("bottomleft", c("rf","rpart","ksvm","glm"), 
+       col=c("#00CC00FF","#CC0000FF","#00CCCCFF","#0000CCFF"),
+       lty=c(1,2,4,5), title="Models", inset=c(0.06, 0.06))
+
+
+
+# Add decorations to the plot.
+title(main="Precision/Recall Plot  boston_1 [validate]",
+      sub=paste("Rattle", format(Sys.time(), "%Y-%b-%d %H:%M:%S"), Sys.info()["user"]))
+# grid()
+
+##-----remove Precision/Recall nnet model on boston_1 [validate]. -----
+# 
+# bos1pr <- predict(bos1nnet, newdata=bos1dataset[bos1validate, c(bos1input, bos1target)])
+# 
+# # Remove observations with missing target.
+# 
+# no.miss   <- na.omit(bos1dataset[bos1validate, c(bos1input, bos1target)]$isWeatherEvent1)
+# miss.list <- attr(no.miss, "na.action")
+# attributes(no.miss) <- NULL
+# 
+# if (length(miss.list))
+# {
+#   pred <- prediction(bos1pr[-miss.list], no.miss)
+# } else
+# {
+#   pred <- prediction(bos1pr, no.miss)
+# }
+# ROCR::plot(performance(pred, "prec", "rec"), col="#CC00CCFF", lty=6, add=TRUE)
+# 
+
+
+
+
+
+
+#------Score the validation dataset.  ----------
+
+# Extract the relevant variables from the dataset.
+
+sdata <- bos1dataset[bos1validate,]
+write.csv(sdata,"sdata_bos1.csv")
+
+
+# Obtain probability scores for the Decision Tree model on boston_1 [validate].
+bos1pr_rpart <- predict(bos1rpart, newdata=bos1dataset[bos1validate, c(bos1input)])[,2]
+
+# # Obtain probability scores for the ada xgboost model on boston_1 [validate].
+# bos1pr_ada <- predict(bos1ada, bos1dataset[bos1validate, c(bos1input, bos1target)])
+
+# Obtain probability scores for the Random Forest model on boston_1 [validate].
+bos1pr_rf <- predict(bos1rf, newdata=na.omit(bos1dataset[bos1validate, c(bos1input)]),
+                     type    = "prob")[,2]
+
+# Obtain probability scores for the SVM model on boston_1 [validate].
+# bos1pr_svm <- kernlab::predict(bos1ksvm, newdata=na.omit(bos1dataset[bos1validate, c(bos1input)]),
+#                                type    = "probabilities")[,2]
+
+bos1pr_svm <- kernlab::predict(bos1ksvm, newdata=bos1dataset[bos1validate, c(bos1input)],
+                               type    = "probabilities")[,2]
+
+
+
+# Obtain probability scores for the Linear model on boston_1 [validate].
+bos1pr_glm <- predict(bos1glm, 
+                      type    = "response",
+                      newdata = bos1dataset[bos1validate, c(bos1input)])
+
+# Obtain probability scores for the neural network model on boston_1 [validate].
+#  bos1pr_nnet <- predict(bos1nnet, newdata=bos1dataset[bos1validate, c(bos1input)])
+
+# Output the combined data as a dataset containing only the score probablities for seattle
+# add all the lagged predictions to this data set
+# 
+rm(bos_score_prob)
+
+# change from seattle bos1 score p
+bos1_score_prob<-cbind(sdata,
+                      bos1pr_rpart,
+                      bos1pr_rf,
+                      bos1pr_svm,
+                       bos1pr_glm)
+
+View(bos1_score_prob)
+
+
+# addd the class predictions to the table
+
+bos1_score_prob$bos1pr_rpart_class<-as.factor(ifelse(bos1_score_prob$bos1pr_rpart >.5,1,0 ))
+#bos1_score_prob$bos1pr_ada_class<-as.factor(ifelse(bos1_score_prob$bos1pr_ada >.5,1,0 ))
+bos1_score_prob$bos1pr_rf_class<-as.factor(ifelse(bos1_score_prob$bos1pr_rf >.5,1,0 ))
+bos1_score_prob$bos1pr_svm_class<-as.factor(ifelse(bos1_score_prob$bos1pr_svm >.5,1,0 ))
+bos1_score_prob$bos1pr_glm_class<-as.factor(ifelse(bos1_score_prob$bos1pr_glm >.5,1,0 ))
+#bos1_score_prob$bos1pr_nnet_class<-as.factor(ifelse(bos1_score_prob$bos1pr_nnet >.5,1,0 ))
+
+
+# later write code here to make sure the predictions table gets updated rather than overwritten
+# to add data to the table 
+View(bos1_score_prob)
+
+write.csv(bos1_score_prob,"bos1_score_prob.csv")
+
+
+#------Generate the confusion matrix statistics from the caret package ------
+# predictions on the validation dataset by probability 
+# 
+# bos1pr_rpart
+# bos1pr_rf
+# bos1pr_ada
+# bos1pr_svm
+# bos1pr_glm
+# bos1pr_nnet
+# bos1_pfrm_rpart
+# sea_score_prob
+
+bos1_rpart_cm<-
+  confusionMatrix(table(Actual=bos1_score_prob$isWeatherEvent1,Predicted=bos1_score_prob$bos1pr_rpart_class), positive='1')
+bos1_rf_cm<-
+  confusionMatrix(table(Actual=bos1_score_prob$isWeatherEvent1,Predicted=bos1_score_prob$bos1pr_rf_class), positive='1')
+# bos1_ada_cm<-
+#   confusionMatrix(table(Actual=bos1_score_prob$isWeatherEvent1,Predicted=bos1_score_prob$bos1pr_ada_class), positive='1')
+bos1_svm_cm<-
+  confusionMatrix(table(Actual=bos1_score_prob$isWeatherEvent1,Predicted=bos1_score_prob$bos1pr_svm_class), positive='1')
+bos1_glm_cm<-
+  confusionMatrix(table(Actual=bos1_score_prob$isWeatherEvent1,Predicted=bos1_score_prob$bos1pr_glm_class), positive='1')
+#bos1_nnet_cm<-
+#   confusionMatrix(table(Actual=bos1_score_prob$isWeatherEvent1,Predicted=bos1_score_prob$bos1pr_nnet_class), positive='1')
+# # 
+# # do this once
+ # bos_pfrm<- data.frame(model='bos1_rpart',
+ #   cutoff='.5',
+ #   as.data.frame(t( as.matrix(bos1_rpart_cm, what="classes"))),
+ #   as.data.frame(t( as.matrix(bos1_rpart_cm, what="overall")))
+ # 
+ # )
+ # View(bos_pfrm)
+ 
+ 
+# # remove row
+#
+#bos_pfrm<-bos_pfrm[-(1:12),]
+#sea_pfrm<-sea_pfrm[-(1:22),]
+
+
+# update rpart 
+bos1_pfrm_rpart<-
+  data.frame(model='bos1_rpart',
+             cutoff='.5',
+             as.data.frame(t( as.matrix(bos1_rpart_cm, what="classes"))),
+             as.data.frame(t( as.matrix(bos1_rpart_cm, what="overall")))
+             
+  )
+
+# update rf 
+bos1_pfrm_rf<-
+  data.frame(model='bos1_rf',
+             cutoff='.5',
+             as.data.frame(t( as.matrix(bos1_rf_cm, what="classes"))),
+             as.data.frame(t( as.matrix(bos1_rf_cm, what="overall")))
+             
+  )
+
+# # update ada
+# bos1_pfrm_ada<-
+#   data.frame(model='bos1_ada',
+#              cutoff='.5',
+#              as.data.frame(t( as.matrix(bos1_ada_cm, what="classes"))),
+#              as.data.frame(t( as.matrix(bos1_ada_cm, what="overall")))
+#   )
+
+
+# update svm
+bos1_pfrm_svm<-
+  data.frame(model='bos1_svm',
+             cutoff='.5',
+             as.data.frame(t( as.matrix(bos1_svm_cm, what="classes"))),
+             as.data.frame(t( as.matrix(bos1_svm_cm, what="overall")))
+  )
+
+
+
+# update glm
+bos1_pfrm_glm<-
+  data.frame(model='bos1_glm',
+             cutoff='.5',
+             as.data.frame(t( as.matrix(bos1_glm_cm, what="classes"))),
+             as.data.frame(t( as.matrix(bos1_glm_cm, what="overall")))
+  )
+# 
+# # update nnet
+# bos1_pfrm_nnet<-
+#   data.frame(model='bos1_nnet',
+#              cutoff='.5',
+#              as.data.frame(t( as.matrix(bos1_nnet_cm, what="classes"))),
+#              as.data.frame(t( as.matrix(bos1_nnet_cm, what="overall")))
+#   )
+
+
+bos_pfrm<-rbind(bos_pfrm,bos1_pfrm_rpart,bos1_pfrm_rf,bos1_pfrm_svm,bos1_pfrm_glm)
+# View(bos_pfrm)
+
+#----- print useful pieces ----------
+
+bos1_rpart_cm
+bos1_rf_cm
+bos1_svm_cm
+bos1_glm_cm
+
+rpart.rules(bos1rpart, roundint=FALSE) 
+print(bos1rpart)
+printcp(bos1rpart)
+
